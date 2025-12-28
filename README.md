@@ -31,14 +31,20 @@ This server implements the Model Context Protocol standard to provide AI assista
 The easiest way to use this MCP server is via NPX, which allows you to run it without installing it globally:
 
 ```bash
-# Option A (recommended): API URL + explicit workspace
+# Option A (recommended): Using App Token
+BITBUCKET_URL="https://api.bitbucket.org/2.0" \
+BITBUCKET_WORKSPACE="your-workspace" \
+BITBUCKET_APP_TOKEN="your-app-token" \
+npx -y bitbucket-mcp@latest
+
+# Option B (legacy): Using Username/Password
 BITBUCKET_URL="https://api.bitbucket.org/2.0" \
 BITBUCKET_WORKSPACE="your-workspace" \
 BITBUCKET_USERNAME="your-username" \
 BITBUCKET_PASSWORD="your-app-password" \
 npx -y bitbucket-mcp@latest
 
-# Option B (legacy-compatible): web URL only; workspace is auto-extracted
+# Option C (legacy-compatible): web URL only; workspace is auto-extracted
 BITBUCKET_URL="https://bitbucket.org/your-workspace" \
 BITBUCKET_USERNAME="your-username" \
 BITBUCKET_PASSWORD="your-app-password" \
@@ -60,28 +66,28 @@ npm install bitbucket-mcp
 Then run it with:
 
 ```bash
-# If installed globally (Option A)
+# If installed globally (recommended - using App Token)
+BITBUCKET_URL="https://api.bitbucket.org/2.0" \
+BITBUCKET_WORKSPACE="your-workspace" \
+BITBUCKET_APP_TOKEN="your-app-token" \
+bitbucket-mcp
+
+# If installed globally (legacy - using Username/Password)
 BITBUCKET_URL="https://api.bitbucket.org/2.0" \
 BITBUCKET_WORKSPACE="your-workspace" \
 BITBUCKET_USERNAME="your-username" \
 BITBUCKET_PASSWORD="your-app-password" \
 bitbucket-mcp
 
-# If installed globally (Option B - legacy-compatible)
-BITBUCKET_URL="https://bitbucket.org/your-workspace" \
-BITBUCKET_USERNAME="your-username" \
-BITBUCKET_PASSWORD="your-app-password" \
-bitbucket-mcp
-
-# If installed in your project (Option A)
+# If installed in your project (recommended - using App Token)
 BITBUCKET_URL="https://api.bitbucket.org/2.0" \
 BITBUCKET_WORKSPACE="your-workspace" \
-BITBUCKET_USERNAME="your-username" \
-BITBUCKET_PASSWORD="your-app-password" \
+BITBUCKET_APP_TOKEN="your-app-token" \
 npx bitbucket-mcp
 
-# If installed in your project (Option B - legacy-compatible)
-BITBUCKET_URL="https://bitbucket.org/your-workspace" \
+# If installed in your project (legacy - using Username/Password)
+BITBUCKET_URL="https://api.bitbucket.org/2.0" \
+BITBUCKET_WORKSPACE="your-workspace" \
 BITBUCKET_USERNAME="your-username" \
 BITBUCKET_PASSWORD="your-app-password" \
 npx bitbucket-mcp
@@ -96,9 +102,10 @@ Configure the server using the following environment variables:
 | Variable                     | Description                                                                    | Required |
 | ---------------------------- | ------------------------------------------------------------------------------ | -------- |
 | `BITBUCKET_URL`              | Bitbucket API base URL. Defaults to `https://api.bitbucket.org/2.0`            | No       |
-| `BITBUCKET_USERNAME`         | Your Bitbucket username                                                        | Yes\*    |
-| `BITBUCKET_PASSWORD`         | Your Bitbucket app password                                                    | Yes\*    |
-| `BITBUCKET_TOKEN`            | Your Bitbucket access token (alternative to username/password)                 | No       |
+| `BITBUCKET_APP_TOKEN`        | Your Bitbucket App Token (recommended - workspace/project/repo scoped)         | No       |
+| `BITBUCKET_TOKEN`            | Your Bitbucket access token (alternative to app token or username/password)    | No       |
+| `BITBUCKET_USERNAME`         | Your Bitbucket username or email                                               | Yes\*    |
+| `BITBUCKET_PASSWORD`         | Your Bitbucket app password or API token                                       | Yes\*    |
 | `BITBUCKET_WORKSPACE`        | Default workspace to use. If omitted and `BITBUCKET_URL` contains it, auto-set | No       |
 | `BITBUCKET_ENABLE_DANGEROUS` | Set to `true` to enable dangerous tools (e.g., deletions). Default: disabled   | No       |
 | `BITBUCKET_LOG_DISABLE`      | Disable file logging when set to `true`/`1`                                    | No       |
@@ -106,9 +113,34 @@ Configure the server using the following environment variables:
 | `BITBUCKET_LOG_DIR`          | Directory to store logs (defaults to OS-specific app log dir)                  | No       |
 | `BITBUCKET_LOG_PER_CWD`      | When `true`, nest logs under a per-working-directory subfolder                 | No       |
 
-Either `BITBUCKET_TOKEN` or both `BITBUCKET_USERNAME` and `BITBUCKET_PASSWORD` must be provided.
+Either `BITBUCKET_APP_TOKEN`, `BITBUCKET_TOKEN`, or both `BITBUCKET_USERNAME` and `BITBUCKET_PASSWORD` must be provided.
 
-### Creating a Bitbucket App Password
+### Authentication Methods
+
+#### Bitbucket App Token (Recommended)
+
+Bitbucket App Tokens are workspace/project/repository scoped tokens that provide secure authentication. This is the recommended method as Bitbucket has deprecated user-level app passwords.
+
+1. Log in to your Bitbucket account
+2. Navigate to the workspace/project/repository settings
+3. Go to Access Tokens and create a new token with the required permissions:
+   - Repositories: Read
+   - Pull requests: Read, Write
+   - Pipelines: Read (required for pipeline operations)
+4. Copy the generated token and use it as the `BITBUCKET_APP_TOKEN` environment variable
+
+```bash
+BITBUCKET_URL="https://api.bitbucket.org/2.0" \
+BITBUCKET_WORKSPACE="your-workspace" \
+BITBUCKET_APP_TOKEN="your-app-token" \
+npx -y bitbucket-mcp@latest
+```
+
+For reference, check the [App Token documentation](https://support.atlassian.com/bitbucket-cloud/docs/using-access-tokens/).
+
+#### Legacy App Password (Deprecated by Bitbucket)
+
+If you still have access to app passwords:
 
 1. Log in to your Bitbucket account
 2. Go to Personal Settings > App Passwords
@@ -117,6 +149,8 @@ Either `BITBUCKET_TOKEN` or both `BITBUCKET_USERNAME` and `BITBUCKET_PASSWORD` m
    - Pull requests: Read, Write
    - Pipelines: Read (required for pipeline operations)
 4. Copy the generated password and use it as the `BITBUCKET_PASSWORD` environment variable
+
+**Note:** Bitbucket has deprecated app passwords. Use App Tokens instead.
 
 ## Troubleshooting
 
@@ -140,12 +174,25 @@ curl -u "your-username:your-app-password" \
   "https://api.bitbucket.org/2.0/repositories/your-workspace"
 ```
 
-### Atlassian API Key 
+### Using Atlassian API Tokens / App Tokens
+
+There are two ways to use Atlassian API tokens or App tokens:
+
+**Option 1 (Recommended):** Use the dedicated `BITBUCKET_APP_TOKEN` environment variable:
+
+```bash
+BITBUCKET_URL="https://api.bitbucket.org/2.0" \
+BITBUCKET_WORKSPACE="your-workspace" \
+BITBUCKET_APP_TOKEN="your-app-token" \
+npx -y bitbucket-mcp@latest
+```
+
+**Option 2 (Legacy workaround):** Use the `BITBUCKET_PASSWORD` variable with your email as username:
 
 1. Put the Atlassian API Key in the `BITBUCKET_PASSWORD` variable, not `BITBUCKET_TOKEN`
 2. Use your Bitbucket email as `BITBUCKET_USERNAME` instead of your regular username
 
-For reference you can check the [API token documentation](https://support.atlassian.com/bitbucket-cloud/docs/using-api-tokens/)
+For reference, check the [API token documentation](https://support.atlassian.com/bitbucket-cloud/docs/using-api-tokens/).
 
 ### Getting Help
 
@@ -163,6 +210,22 @@ To integrate this MCP server with Cursor:
 3. Click on "Model Context Protocol"
 4. Add a new MCP configuration:
 
+**Option A (Recommended - using App Token):**
+
+```json
+"bitbucket": {
+  "command": "npx",
+  "env": {
+    "BITBUCKET_URL": "https://api.bitbucket.org/2.0",
+    "BITBUCKET_WORKSPACE": "your-workspace",
+    "BITBUCKET_APP_TOKEN": "your-app-token"
+  },
+  "args": ["-y", "bitbucket-mcp@latest"]
+}
+```
+
+**Option B (Legacy - using Username/Password):**
+
 ```json
 "bitbucket": {
   "command": "npx",
@@ -176,8 +239,8 @@ To integrate this MCP server with Cursor:
 }
 ```
 
-1. Save the configuration
-2. Use the "/bitbucket" command in Cursor to access Bitbucket repositories and pull requests
+5. Save the configuration
+6. Use the "/bitbucket" command in Cursor to access Bitbucket repositories and pull requests
 
 ### Using a Local Build with Cursor
 
@@ -189,8 +252,7 @@ If you're developing locally and want to test your changes:
   "env": {
     "BITBUCKET_URL": "https://api.bitbucket.org/2.0",
     "BITBUCKET_WORKSPACE": "your-workspace",
-    "BITBUCKET_USERNAME": "your-username",
-    "BITBUCKET_PASSWORD": "your-app-password"
+    "BITBUCKET_APP_TOKEN": "your-app-token"
   },
   "args": ["/path/to/your/local/bitbucket-mcp/dist/index.js"]
 }

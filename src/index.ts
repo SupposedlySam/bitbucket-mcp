@@ -317,7 +317,8 @@ interface BitbucketProjectBranchingModel {
 
 interface BitbucketConfig {
   baseUrl: string;
-  token?: string;
+  appToken?: string; // Bitbucket App Token (workspace/project/repo scoped)
+  token?: string; // Legacy personal access token
   username?: string;
   password?: string;
   defaultWorkspace?: string;
@@ -503,6 +504,7 @@ class BitbucketServer {
     // Configuration from environment variables
     const initialConfig: BitbucketConfig = {
       baseUrl: process.env.BITBUCKET_URL ?? "https://api.bitbucket.org/2.0",
+      appToken: process.env.BITBUCKET_APP_TOKEN,
       token: process.env.BITBUCKET_TOKEN,
       username: process.env.BITBUCKET_USERNAME,
       password: process.env.BITBUCKET_PASSWORD,
@@ -541,17 +543,26 @@ class BitbucketServer {
       throw new Error("BITBUCKET_URL is required");
     }
 
-    if (!this.config.token && !(this.config.username && this.config.password)) {
+    if (
+      !this.config.appToken &&
+      !this.config.token &&
+      !(this.config.username && this.config.password)
+    ) {
       throw new Error(
-        "Either BITBUCKET_TOKEN or BITBUCKET_USERNAME/PASSWORD is required"
+        "Either BITBUCKET_APP_TOKEN, BITBUCKET_TOKEN, or BITBUCKET_USERNAME/PASSWORD is required"
       );
     }
 
-    // Setup Axios instance
+    // Setup Axios instance with authentication priority:
+    // 1. App Token (BITBUCKET_APP_TOKEN) - highest priority
+    // 2. Personal Access Token (BITBUCKET_TOKEN)
+    // 3. Username/Password (BITBUCKET_USERNAME/PASSWORD) - lowest priority
+    const bearerToken = this.config.appToken || this.config.token;
+
     this.api = axios.create({
       baseURL: this.config.baseUrl,
-      headers: this.config.token
-        ? { Authorization: `Bearer ${this.config.token}` }
+      headers: bearerToken
+        ? { Authorization: `Bearer ${bearerToken}` }
         : { "Content-Type": "application/json" },
       auth:
         this.config.username && this.config.password
