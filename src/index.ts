@@ -479,10 +479,7 @@ class BitbucketServer {
     "deletePullRequestTask",
   ]);
   private isDangerousTool(name: string): boolean {
-    // Explicitly dangerous or conservative prefix match (delete*)
-    if (this.dangerousToolNames.has(name)) return true;
-    if (/^delete/i.test(name)) return true;
-    return false;
+    return this.dangerousToolNames.has(name);
   }
 
   constructor() {
