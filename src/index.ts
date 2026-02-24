@@ -894,7 +894,7 @@ class BitbucketServer {
         },
         {
           name: "addPullRequestComment",
-          description: "Add a comment to a pull request (general or inline)",
+          description: "Add a comment to a pull request (general or inline). Use parent_id to reply to an existing comment thread.",
           inputSchema: {
             type: "object",
             properties: {
@@ -910,6 +910,11 @@ class BitbucketServer {
               content: {
                 type: "string",
                 description: "Comment content in markdown format",
+              },
+              parent_id: {
+                type: "number",
+                description:
+                  "ID of the parent comment to reply to. Creates a threaded reply under the specified comment.",
               },
               pending: {
                 type: "boolean",
@@ -945,7 +950,7 @@ class BitbucketServer {
         {
           name: "addPendingPullRequestComment",
           description:
-            "Add a pending (draft) comment to a pull request that can be published later",
+            "Add a pending (draft) comment to a pull request that can be published later. Use parent_id to reply to an existing comment thread.",
           inputSchema: {
             type: "object",
             properties: {
@@ -961,6 +966,11 @@ class BitbucketServer {
               content: {
                 type: "string",
                 description: "Comment content in markdown format",
+              },
+              parent_id: {
+                type: "number",
+                description:
+                  "ID of the parent comment to reply to. Creates a threaded reply under the specified comment.",
               },
               inline: {
                 type: "object",
@@ -1998,7 +2008,8 @@ class BitbucketServer {
               args.pull_request_id as string,
               args.content as string,
               args.inline as InlineCommentInline,
-              args.pending as boolean
+              args.pending as boolean,
+              args.parent_id as number
             );
           case "addPendingPullRequestComment":
             return await this.addPendingPullRequestComment(
@@ -2006,7 +2017,8 @@ class BitbucketServer {
               args.repo_slug as string,
               args.pull_request_id as string,
               args.content as string,
-              args.inline as InlineCommentInline
+              args.inline as InlineCommentInline,
+              args.parent_id as number
             );
           case "publishPendingComments":
             return await this.publishPendingComments(
@@ -3036,7 +3048,8 @@ class BitbucketServer {
     pull_request_id: string,
     content: string,
     inline?: InlineCommentInline,
-    pending?: boolean
+    pending?: boolean,
+    parent_id?: number
   ) {
     try {
       logger.info("Adding comment to Bitbucket pull request", {
@@ -3044,6 +3057,7 @@ class BitbucketServer {
         repo_slug,
         pull_request_id,
         inline: inline ? "inline comment" : "general comment",
+        parent_id: parent_id ?? null,
       });
 
       // Prepare the comment data
@@ -3052,6 +3066,11 @@ class BitbucketServer {
           raw: content,
         },
       };
+
+      // Add parent reference for threaded replies
+      if (parent_id !== undefined) {
+        commentData.parent = { id: parent_id };
+      }
 
       // Add pending flag if provided
       if (pending !== undefined) {
@@ -3386,7 +3405,8 @@ class BitbucketServer {
     repo_slug: string,
     pull_request_id: string,
     content: string,
-    inline?: InlineCommentInline
+    inline?: InlineCommentInline,
+    parent_id?: number
   ) {
     try {
       logger.info("Adding pending comment to Bitbucket pull request", {
@@ -3394,6 +3414,7 @@ class BitbucketServer {
         repo_slug,
         pull_request_id,
         inline: inline ? "inline comment" : "general comment",
+        parent_id: parent_id ?? null,
       });
 
       // Use the existing addPullRequestComment method with pending=true
@@ -3403,7 +3424,8 @@ class BitbucketServer {
         pull_request_id,
         content,
         inline,
-        true // Set pending to true for draft comment
+        true, // Set pending to true for draft comment
+        parent_id
       );
     } catch (error) {
       logger.error("Error adding pending comment to pull request", {
