@@ -476,7 +476,6 @@ class BitbucketServer {
   private readonly config: BitbucketConfig;
   private readonly paginator: BitbucketPaginator;
   private readonly dangerousToolNames = new Set<string>([
-    "deletePullRequestComment",
     "deletePullRequestTask",
   ]);
   private isDangerousTool(name: string): boolean {
