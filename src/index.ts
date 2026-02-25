@@ -4791,7 +4791,7 @@ class BitbucketServer {
         task_id,
       });
 
-      const response = await this.api.get(`/tasks/${task_id}`);
+      const response = await this.api.get(`/repositories/${workspace}/${repo_slug}/pullrequests/${pull_request_id}/tasks/${task_id}`);
 
       return {
         content: [
@@ -4835,7 +4835,7 @@ class BitbucketServer {
       if (content !== undefined) data.content = { raw: content };
       if (state !== undefined) data.state = state;
 
-      const response = await this.api.put(`/tasks/${task_id}`, data);
+      const response = await this.api.put(`/repositories/${workspace}/${repo_slug}/pullrequests/${pull_request_id}/tasks/${task_id}`, data);
 
       return {
         content: [
@@ -4873,7 +4873,7 @@ class BitbucketServer {
         task_id,
       });
 
-      await this.api.delete(`/tasks/${task_id}`);
+      await this.api.delete(`/repositories/${workspace}/${repo_slug}/pullrequests/${pull_request_id}/tasks/${task_id}`);
 
       return {
         content: [{ type: "text", text: "Task deleted successfully." }],
