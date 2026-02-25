@@ -1860,6 +1860,38 @@ class BitbucketServer {
             required: ["workspace", "repo_slug"],
           },
         },
+        {
+          name: "checkPrReplies",
+          description:
+            "Check PR comment threads for new replies. By default returns threads where the given user participated that have new replies since their last comment. Use 'all' mode to return every thread with activity.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              workspace: {
+                type: "string",
+                description: "Bitbucket workspace name",
+              },
+              repo_slug: { type: "string", description: "Repository slug" },
+              pull_request_ids: {
+                type: "array",
+                items: { type: "string" },
+                description:
+                  "One or more pull request IDs to check for replies",
+              },
+              self: {
+                type: "string",
+                description:
+                  "Display name or account_id to identify 'your' comments. Required unless mode is 'all'.",
+              },
+              all: {
+                type: "boolean",
+                description:
+                  "When true, returns all threads with replies (ignores 'self' filtering). Default: false.",
+              },
+            },
+            required: ["workspace", "repo_slug", "pull_request_ids"],
+          },
+        },
       ].filter(
         (tool) =>
           this.config.allowDangerousCommands === true ||
@@ -2267,6 +2299,14 @@ class BitbucketServer {
             return await this.getEffectiveDefaultReviewers(
               args.workspace as string,
               args.repo_slug as string
+            );
+          case "checkPrReplies":
+            return await this.checkPrReplies(
+              args.workspace as string,
+              args.repo_slug as string,
+              args.pull_request_ids as string[],
+              args.self as string | undefined,
+              args.all as boolean | undefined
             );
           default:
             throw new McpError(
@@ -4908,6 +4948,229 @@ class BitbucketServer {
       throw new McpError(
         ErrorCode.InternalError,
         `Failed to get pull request statuses: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+  }
+
+  async checkPrReplies(
+    workspace: string,
+    repo_slug: string,
+    pull_request_ids: string[],
+    self?: string,
+    all?: boolean
+  ) {
+    try {
+      logger.info("Checking PR comment threads for replies", {
+        workspace,
+        repo_slug,
+        pull_request_ids,
+        self,
+        all,
+      });
+
+      const results: Record<string, unknown> = {};
+
+      for (const prId of pull_request_ids) {
+        const commentsResult = await this.paginator.fetchValues<{
+          id: number;
+          parent?: { id: number };
+          user: { display_name: string; account_id: string };
+          content: { raw: string };
+          created_on: string;
+          deleted: boolean;
+          inline?: { path: string; from?: number; to?: number };
+        }>(
+          `/repositories/${workspace}/${repo_slug}/pullrequests/${prId}/comments`,
+          { all: true, pagelen: 100, description: "checkPrReplies" }
+        );
+
+        const comments = commentsResult.values;
+        const byId = new Map(comments.map((c) => [c.id, c]));
+
+        const rootOf = (
+          c: { id: number; parent?: { id: number } },
+          depth = 0
+        ): number => {
+          if (depth > 50 || !c.parent) return c.id;
+          const p = byId.get(c.parent.id);
+          return p ? rootOf(p, depth + 1) : c.id;
+        };
+
+        const threads = new Map<number, typeof comments>();
+        for (const c of comments) {
+          if (c.deleted) continue;
+          const root = rootOf(c);
+          const list = threads.get(root) ?? [];
+          list.push(c);
+          threads.set(root, list);
+        }
+        for (const list of threads.values()) {
+          list.sort(
+            (a, b) =>
+              new Date(a.created_on).getTime() -
+              new Date(b.created_on).getTime()
+          );
+        }
+
+        let resolvedAccountId = "";
+        if (!all && self) {
+          if (self.includes(":")) {
+            resolvedAccountId = self;
+          } else {
+            const lower = self.toLowerCase();
+            const exact = comments.find(
+              (c) => c.user.display_name.toLowerCase() === lower
+            );
+            if (exact) {
+              resolvedAccountId = exact.user.account_id;
+            } else {
+              const partial = comments.find((c) =>
+                c.user.display_name.toLowerCase().includes(lower)
+              );
+              if (partial) resolvedAccountId = partial.user.account_id;
+            }
+          }
+        }
+
+        if (all) {
+          const threadResults: unknown[] = [];
+          for (const [rootId, thread] of threads) {
+            if (thread.length < 2) continue;
+            const root = byId.get(rootId);
+            threadResults.push({
+              thread_id: rootId,
+              location: root?.inline
+                ? {
+                    path: root.inline.path,
+                    from: root.inline.from,
+                    to: root.inline.to,
+                  }
+                : null,
+              root_comment: root
+                ? {
+                    author: root.user.display_name,
+                    account_id: root.user.account_id,
+                    content: root.content.raw,
+                    created_on: root.created_on,
+                  }
+                : null,
+              replies: thread
+                .filter((c) => c.id !== rootId)
+                .map((c) => ({
+                  id: c.id,
+                  author: c.user.display_name,
+                  account_id: c.user.account_id,
+                  content: c.content.raw,
+                  created_on: c.created_on,
+                })),
+              total_comments: thread.length,
+            });
+          }
+
+          results[prId] = {
+            mode: "all",
+            total_threads: threads.size,
+            active_threads: threadResults.length,
+            threads: threadResults,
+          };
+        } else {
+          if (!resolvedAccountId) {
+            const commenters = [
+              ...new Set(comments.map((c) => c.user.display_name)),
+            ];
+            results[prId] = {
+              mode: "self",
+              error: "Could not resolve account ID for self",
+              hint: "Provide a display name or account_id via the 'self' parameter",
+              commenters,
+            };
+            continue;
+          }
+
+          const threadResults: unknown[] = [];
+          let totalNewReplies = 0;
+
+          for (const [rootId, thread] of threads) {
+            const myComments = thread.filter(
+              (c) => c.user.account_id === resolvedAccountId
+            );
+            if (myComments.length === 0) continue;
+
+            const myLast = myComments[myComments.length - 1];
+            const myLastTime = new Date(myLast.created_on).getTime();
+            const newReplies = thread.filter(
+              (c) =>
+                c.user.account_id !== resolvedAccountId &&
+                new Date(c.created_on).getTime() > myLastTime
+            );
+
+            if (newReplies.length === 0) continue;
+
+            totalNewReplies += newReplies.length;
+            const root = byId.get(rootId);
+            threadResults.push({
+              thread_id: rootId,
+              location: root?.inline
+                ? {
+                    path: root.inline.path,
+                    from: root.inline.from,
+                    to: root.inline.to,
+                  }
+                : null,
+              root_comment: root
+                ? {
+                    author: root.user.display_name,
+                    account_id: root.user.account_id,
+                    content: root.content.raw,
+                    created_on: root.created_on,
+                  }
+                : null,
+              new_replies: newReplies.map((c) => ({
+                id: c.id,
+                author: c.user.display_name,
+                account_id: c.user.account_id,
+                content: c.content.raw,
+                created_on: c.created_on,
+              })),
+            });
+          }
+
+          const myThreadCount = [...threads.values()].filter((t) =>
+            t.some((c) => c.user.account_id === resolvedAccountId)
+          ).length;
+
+          results[prId] = {
+            mode: "self",
+            resolved_account_id: resolvedAccountId,
+            total_threads: threads.size,
+            my_threads: myThreadCount,
+            threads_with_new_replies: threadResults.length,
+            total_new_replies: totalNewReplies,
+            threads: threadResults,
+          };
+        }
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(results, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      logger.error("Error checking PR replies", {
+        error,
+        workspace,
+        repo_slug,
+        pull_request_ids,
+      });
+      throw new McpError(
+        ErrorCode.InternalError,
+        `Failed to check PR replies: ${
           error instanceof Error ? error.message : String(error)
         }`
       );
