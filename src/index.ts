@@ -1714,7 +1714,7 @@ class BitbucketServer {
         },
         {
           name: "getPullRequestTasks",
-          description: "List tasks on a pull request",
+          description: "List tasks on a pull request. Fetches all tasks by default (follows pagination).",
           inputSchema: {
             type: "object",
             properties: {
@@ -1727,6 +1727,8 @@ class BitbucketServer {
                 type: "string",
                 description: "Pull request ID",
               },
+              ...PAGINATION_BASE_SCHEMA,
+              all: PAGINATION_ALL_SCHEMA,
             },
             required: ["workspace", "repo_slug", "pull_request_id"],
           },
@@ -4691,6 +4693,7 @@ class BitbucketServer {
     page?: number,
     all?: boolean
   ) {
+    const resolvedAll = all ?? true;
     try {
       logger.info("Getting pull request tasks", {
         workspace,
@@ -4698,7 +4701,7 @@ class BitbucketServer {
         pull_request_id,
         pagelen,
         page,
-        all,
+        all: resolvedAll,
       });
 
       const result = await this.paginator.fetchValues(
@@ -4706,7 +4709,7 @@ class BitbucketServer {
         {
           pagelen,
           page,
-          all,
+          all: resolvedAll,
           description: "getPullRequestTasks",
         }
       );
