@@ -4747,7 +4747,7 @@ class BitbucketServer {
         pull_request_id,
       });
 
-      const data: Record<string, any> = { content };
+      const data: Record<string, any> = { content: { raw: content } };
       if (commentId) data.comment = { id: commentId };
       if (state) data.state = state;
 
@@ -4832,7 +4832,7 @@ class BitbucketServer {
       });
 
       const data: Record<string, any> = {};
-      if (content !== undefined) data.content = content;
+      if (content !== undefined) data.content = { raw: content };
       if (state !== undefined) data.state = state;
 
       const response = await this.api.put(`/tasks/${task_id}`, data);
