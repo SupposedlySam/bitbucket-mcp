@@ -912,11 +912,6 @@ class BitbucketServer {
                 description:
                   "ID of the parent comment to reply to. Creates a threaded reply under the specified comment.",
               },
-              pending: {
-                type: "boolean",
-                description:
-                  "Whether to create this comment as a pending comment (draft state)",
-              },
               inline: {
                 type: "object",
                 description:
@@ -941,76 +936,6 @@ class BitbucketServer {
               },
             },
             required: ["workspace", "repo_slug", "pull_request_id", "content"],
-          },
-        },
-        {
-          name: "addPendingPullRequestComment",
-          description:
-            "Add a pending (draft) comment to a pull request that can be published later. Use parent_id to reply to an existing comment thread.",
-          inputSchema: {
-            type: "object",
-            properties: {
-              workspace: {
-                type: "string",
-                description: "Bitbucket workspace name",
-              },
-              repo_slug: { type: "string", description: "Repository slug" },
-              pull_request_id: {
-                type: "string",
-                description: "Pull request ID",
-              },
-              content: {
-                type: "string",
-                description: "Comment content in markdown format",
-              },
-              parent_id: {
-                type: "number",
-                description:
-                  "ID of the parent comment to reply to. Creates a threaded reply under the specified comment.",
-              },
-              inline: {
-                type: "object",
-                description:
-                  "Inline comment information for commenting on specific lines",
-                properties: {
-                  path: {
-                    type: "string",
-                    description: "Path to the file in the repository",
-                  },
-                  from: {
-                    type: "number",
-                    description:
-                      "Line number in the old version of the file (for deleted or modified lines)",
-                  },
-                  to: {
-                    type: "number",
-                    description:
-                      "Line number in the new version of the file (for added or modified lines)",
-                  },
-                },
-                required: ["path"],
-              },
-            },
-            required: ["workspace", "repo_slug", "pull_request_id", "content"],
-          },
-        },
-        {
-          name: "publishPendingComments",
-          description: "Publish all pending comments for a pull request",
-          inputSchema: {
-            type: "object",
-            properties: {
-              workspace: {
-                type: "string",
-                description: "Bitbucket workspace name",
-              },
-              repo_slug: { type: "string", description: "Repository slug" },
-              pull_request_id: {
-                type: "string",
-                description: "Pull request ID",
-              },
-            },
-            required: ["workspace", "repo_slug", "pull_request_id"],
           },
         },
         {
@@ -2038,23 +1963,7 @@ class BitbucketServer {
               args.pull_request_id as string,
               args.content as string,
               args.inline as InlineCommentInline,
-              args.pending as boolean,
               args.parent_id as number
-            );
-          case "addPendingPullRequestComment":
-            return await this.addPendingPullRequestComment(
-              args.workspace as string,
-              args.repo_slug as string,
-              args.pull_request_id as string,
-              args.content as string,
-              args.inline as InlineCommentInline,
-              args.parent_id as number
-            );
-          case "publishPendingComments":
-            return await this.publishPendingComments(
-              args.workspace as string,
-              args.repo_slug as string,
-              args.pull_request_id as string
             );
           case "getRepositoryBranchingModel":
             return await this.getRepositoryBranchingModel(
@@ -3086,7 +2995,6 @@ class BitbucketServer {
     pull_request_id: string,
     content: string,
     inline?: InlineCommentInline,
-    pending?: boolean,
     parent_id?: number
   ) {
     try {
@@ -3098,21 +3006,14 @@ class BitbucketServer {
         parent_id: parent_id ?? null,
       });
 
-      // Prepare the comment data
       const commentData: any = {
         content: {
           raw: content,
         },
       };
 
-      // Add parent reference for threaded replies
       if (parent_id !== undefined) {
         commentData.parent = { id: parent_id };
-      }
-
-      // Add pending flag if provided
-      if (pending !== undefined) {
-        commentData.pending = pending;
       }
 
       // Add inline information if provided
@@ -3438,150 +3339,6 @@ class BitbucketServer {
     }
   }
 
-  async addPendingPullRequestComment(
-    workspace: string,
-    repo_slug: string,
-    pull_request_id: string,
-    content: string,
-    inline?: InlineCommentInline,
-    parent_id?: number
-  ) {
-    try {
-      logger.info("Adding pending comment to Bitbucket pull request", {
-        workspace,
-        repo_slug,
-        pull_request_id,
-        inline: inline ? "inline comment" : "general comment",
-        parent_id: parent_id ?? null,
-      });
-
-      // Use the existing addPullRequestComment method with pending=true
-      return await this.addPullRequestComment(
-        workspace,
-        repo_slug,
-        pull_request_id,
-        content,
-        inline,
-        true, // Set pending to true for draft comment
-        parent_id
-      );
-    } catch (error) {
-      logger.error("Error adding pending comment to pull request", {
-        error,
-        workspace,
-        repo_slug,
-        pull_request_id,
-      });
-      throw new McpError(
-        ErrorCode.InternalError,
-        `Failed to add pending pull request comment: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
-    }
-  }
-
-  async publishPendingComments(
-    workspace: string,
-    repo_slug: string,
-    pull_request_id: string
-  ) {
-    try {
-      logger.info("Publishing pending comments for Bitbucket pull request", {
-        workspace,
-        repo_slug,
-        pull_request_id,
-      });
-
-      // First, get all pending comments for the pull request
-      const commentsResult = await this.paginator.fetchValues(
-        `/repositories/${workspace}/${repo_slug}/pullrequests/${pull_request_id}/comments`,
-        {
-          pagelen: BITBUCKET_MAX_PAGELEN,
-          all: true,
-          description: "publishPendingComments",
-        }
-      );
-
-      type PendingComment = {
-        id: number;
-        content: { raw?: string; html?: string; markup?: string };
-        inline?: InlineCommentInline;
-        pending?: boolean;
-      };
-
-      const comments = (commentsResult.values || []) as PendingComment[];
-      const pendingComments = comments.filter(
-        (comment: any) => comment.pending === true
-      ) as PendingComment[];
-
-      if (pendingComments.length === 0) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: "No pending comments found to publish.",
-            },
-          ],
-        };
-      }
-
-      // Publish each pending comment by updating it with pending=false
-      const publishResults = [];
-      for (const comment of pendingComments) {
-        try {
-          const updateResponse = await this.api.put(
-            `/repositories/${workspace}/${repo_slug}/pullrequests/${pull_request_id}/comments/${comment.id}`,
-            {
-              content: comment.content,
-              pending: false,
-              ...(comment.inline && { inline: comment.inline }),
-            }
-          );
-          publishResults.push({
-            commentId: comment.id,
-            status: "published",
-            data: updateResponse.data,
-          });
-        } catch (error) {
-          publishResults.push({
-            commentId: comment.id,
-            status: "error",
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      }
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              {
-                message: `Published ${pendingComments.length} pending comments`,
-                results: publishResults,
-              },
-              null,
-              2
-            ),
-          },
-        ],
-      };
-    } catch (error) {
-      logger.error("Error publishing pending comments", {
-        error,
-        workspace,
-        repo_slug,
-        pull_request_id,
-      });
-      throw new McpError(
-        ErrorCode.InternalError,
-        `Failed to publish pending comments: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
-    }
-  }
 
   async createDraftPullRequest(
     workspace: string,
