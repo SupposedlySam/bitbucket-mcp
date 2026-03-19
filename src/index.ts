@@ -929,7 +929,7 @@ class BitbucketServer {
         {
           name: "addPullRequestComment",
           description:
-            "Add a comment to a pull request (general or inline). Use parent_id to reply to an existing comment thread. When suggestion_format is true, suggested_code is wrapped in ```suggestion ... ``` — Bitbucket Server supports 'Apply suggestion'; Bitbucket Cloud may or may not. Note: Comments on context lines (unchanged lines between diff hunks) may appear in PR overview but not in the Files changed / diff view if that section is collapsed — this is a Bitbucket UI limitation.",
+            "Add a comment to a pull request (general or inline). Use parent_id to reply to an existing comment thread. When suggested_code is provided, it is wrapped in ```suggestion ... ``` and appended — Bitbucket Server supports 'Apply suggestion'; Bitbucket Cloud may or may not. Note: Comments on context lines (unchanged lines between diff hunks) may appear in PR overview but not in the Files changed / diff view if that section is collapsed — this is a Bitbucket UI limitation.",
           inputSchema: {
             type: "object",
             properties: {
@@ -944,17 +944,12 @@ class BitbucketServer {
               },
               content: {
                 type: "string",
-                description: "Comment content in markdown format (prose). When suggestion_format is true, this is the prose; suggested_code is appended as a ```suggestion block.",
-              },
-              suggestion_format: {
-                type: "boolean",
-                description:
-                  "When true, append suggested_code wrapped in ```suggestion ... ``` to the comment. Bitbucket Server supports 'Apply suggestion' for these; Bitbucket Cloud may or may not render them. Requires suggested_code.",
+                description: "Comment content in markdown format (prose). When suggested_code is provided, it is appended as a ```suggestion block.",
               },
               suggested_code: {
                 type: "string",
                 description:
-                  "Code to suggest. Required when suggestion_format is true. Gets wrapped in ```suggestion ... ``` and appended to content.",
+                  "Code to suggest. When provided, gets wrapped in ```suggestion ... ``` and appended to content. Bitbucket Server supports 'Apply suggestion'; Bitbucket Cloud may or may not.",
               },
               parent_id: {
                 type: "number",
@@ -2030,7 +2025,6 @@ class BitbucketServer {
               args.content as string,
               args.inline as InlineCommentInline,
               args.parent_id as number,
-              args.suggestion_format as boolean,
               args.suggested_code as string
             );
           case "getRepositoryBranchingModel":
@@ -3154,19 +3148,11 @@ class BitbucketServer {
     content: string,
     inline?: InlineCommentInline,
     parent_id?: number,
-    suggestion_format?: boolean,
     suggested_code?: string
   ) {
     try {
-      if (suggestion_format && !suggested_code) {
-        throw new McpError(
-          ErrorCode.InvalidParams,
-          "suggested_code is required when suggestion_format is true"
-        );
-      }
-
       let rawContent = content;
-      if (suggestion_format && suggested_code) {
+      if (suggested_code) {
         rawContent = `${content}\n\n\`\`\`suggestion\n${suggested_code}\n\`\`\``;
       }
 
@@ -3176,7 +3162,7 @@ class BitbucketServer {
         pull_request_id,
         inline: inline ? "inline comment" : "general comment",
         parent_id: parent_id ?? null,
-        suggestion_format: suggestion_format ?? false,
+        has_suggestion: !!suggested_code,
       });
 
       const commentData: any = {
