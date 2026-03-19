@@ -243,8 +243,12 @@ interface BitbucketParticipant {
 /**
  * Represents inline comment positioning information.
  * Bitbucket uses diff semantics: from/to are absolute line numbers in old/new file.
- * For multi-line comments, use start_from/start_to for the range start.
- * For files with multiple diff hunks, start_from/start_to help identify the chunk.
+ *
+ * For SINGLE-LINE comments: use only `to` (new file) or only `from` (old file).
+ * Do NOT use start_from/start_to for chunk disambiguation — they cause 400 errors.
+ *
+ * For MULTI-LINE comments: from/to are the range END; start_from/start_to are the range START.
+ * Must satisfy start_from <= from and start_to <= to.
  */
 interface InlineCommentInline {
   path: string;
@@ -252,9 +256,9 @@ interface InlineCommentInline {
   from?: number;
   /** Line in NEW file (source/PR branch). Use only when commenting on added/changed lines. */
   to?: number;
-  /** Chunk start in OLD file (from diff @@ header). Helps placement when file has multiple hunks. */
+  /** Multi-line only: START of range in OLD file. Must be <= from. Do NOT use for chunk disambiguation. */
   start_from?: number;
-  /** Chunk start in NEW file (from diff @@ header). Helps placement when file has multiple hunks. */
+  /** Multi-line only: START of range in NEW file. Must be <= to. Do NOT use for chunk disambiguation. */
   start_to?: number;
 }
 
@@ -879,7 +883,7 @@ class BitbucketServer {
         {
           name: "getPullRequestDiffChunks",
           description:
-            "Get diff chunk boundaries for a PR. Use to compute correct start_from/start_to for addPullRequestComment when inline comments land on wrong lines. Returns chunks per file with old_start, old_count, new_start, new_count from the diff @@ headers.",
+            "Get diff chunk boundaries for a PR. Returns chunks per file with old_start, old_count, new_start, new_count from the diff @@ headers. Use for understanding file structure; do NOT pass these as start_from/start_to to addPullRequestComment (those are for multi-line comment ranges only, not chunk disambiguation).",
           inputSchema: {
             type: "object",
             properties: {
@@ -924,7 +928,8 @@ class BitbucketServer {
         },
         {
           name: "addPullRequestComment",
-          description: "Add a comment to a pull request (general or inline). Use parent_id to reply to an existing comment thread.",
+          description:
+            "Add a comment to a pull request (general or inline). Use parent_id to reply to an existing comment thread. Note: Comments on context lines (unchanged lines between diff hunks) may appear in PR overview but not in the Files changed / diff view if that section is collapsed — this is a Bitbucket UI limitation.",
           inputSchema: {
             type: "object",
             properties: {
@@ -949,7 +954,7 @@ class BitbucketServer {
               inline: {
                 type: "object",
                 description:
-                  "Inline comment information. Use ONLY 'to' when commenting on the NEW file (PR branch); use ONLY 'from' when commenting on the OLD file. Avoid mixing both unless you have exact old/new line numbers. For multi-hunk files, provide start_from/start_to from the diff chunk header.",
+                  "Inline comment information. Single-line: use ONLY 'to' (new file) or ONLY 'from' (old file). Multi-line: from/to = range END, start_from/start_to = range START (must have start <= end). Do NOT use start_from/start_to for chunk disambiguation — causes 400.",
                 properties: {
                   path: {
                     type: "string",
@@ -958,22 +963,22 @@ class BitbucketServer {
                   from: {
                     type: "number",
                     description:
-                      "Line in OLD file (destination/base). Use only for removed/context lines.",
+                      "Line in OLD file (destination/base). Use for removed/context lines. For multi-line, this is the range END.",
                   },
                   to: {
                     type: "number",
                     description:
-                      "Line in NEW file (source/PR branch). Use only for added/changed lines.",
+                      "Line in NEW file (source/PR branch). Use for added/changed lines. For multi-line, this is the range END.",
                   },
                   start_from: {
                     type: "number",
                     description:
-                      "Chunk start line in OLD file (from diff @@ header). Use when file has multiple hunks.",
+                      "Multi-line only: range START in OLD file. Must be <= from. Do NOT use for chunk disambiguation.",
                   },
                   start_to: {
                     type: "number",
                     description:
-                      "Chunk start line in NEW file (from diff @@ header). Use when file has multiple hunks.",
+                      "Multi-line only: range START in NEW file. Must be <= to. Do NOT use for chunk disambiguation.",
                   },
                 },
                 required: ["path"],
