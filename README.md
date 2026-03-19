@@ -420,24 +420,32 @@ Creates a comment on a pull request (general or inline).
 - `content`: Comment content in markdown format
 - `inline` (optional): Inline comment information for commenting on specific lines
 
-**Inline Comment Format:**
+**Inline Comment Format (diff semantics):**
 
-The `inline` parameter allows you to create comments on specific lines of code in the pull request diff:
+Bitbucket uses **old file** (destination/base) vs **new file** (source/PR branch) line numbers:
+
+- `from`: Line in OLD file. Use **only** when commenting on removed/context lines.
+- `to`: Line in NEW file. Use **only** when commenting on added/changed lines.
+- `start_from`, `start_to`: Chunk start lines from the diff `@@` header. Use when the file has multiple hunks and comments land on the wrong line.
+
+**Important:** Use **either** `from` **or** `to`, not both, unless you have exact old/new line numbers. Mixing both can cause Bitbucket to prefer `from` and display the comment on the wrong line.
 
 ```json
 {
-  "path": "src/file.ts",
-  "to": 15, // Line number in NEW version (for added/modified lines)
-  "from": 10 // Line number in OLD version (for deleted/modified lines)
+  "path": "app/drops/lib/foo.dart",
+  "to": 112
 }
 ```
 
-**Examples:**
+For multi-hunk files, call `getPullRequestDiffChunks` first to get chunk boundaries, then pass `start_from`/`start_to` from the chunk that contains your target line:
 
-- **General comment**: Omit the `inline` parameter for a general pull request comment
-- **Comment on new line**: Use only `to` parameter
-- **Comment on deleted line**: Use only `from` parameter
-- **Comment on modified line**: Use both `from` and `to` parameters
+```json
+{
+  "path": "app/drops/lib/foo.dart",
+  "to": 112,
+  "start_to": 108
+}
+```
 
 **Usage:**
 
@@ -445,12 +453,25 @@ The `inline` parameter allows you to create comments on specific lines of code i
 // General comment
 addPullRequestComment(workspace, repo, pr_id, "Great work!");
 
-// Inline comment on new line 25
+// Inline comment on NEW file line 25 (PR branch)
 addPullRequestComment(workspace, repo, pr_id, "Consider error handling here", {
   path: "src/service.ts",
   to: 25,
 });
+
+// If comments land on wrong line, use getPullRequestDiffChunks to get start_to
 ```
+
+#### `getPullRequestDiffChunks`
+
+Returns diff chunk boundaries per file. Use when inline comments via `addPullRequestComment` land on the wrong line—often due to multiple hunks in a file.
+
+**Parameters:**
+
+- `workspace`, `repo_slug`, `pull_request_id`: PR identifiers
+- `path` (optional): Filter to a specific file path
+
+**Returns:** JSON object mapping file path to array of chunks. Each chunk has `old_start`, `old_count`, `new_start`, `new_count` from the diff `@@` header. Use `new_start` as `start_to` and `old_start` as `start_from` when calling `addPullRequestComment`.
 
 #### `getPullRequestComment`
 

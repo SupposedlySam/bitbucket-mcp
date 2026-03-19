@@ -241,12 +241,21 @@ interface BitbucketParticipant {
 }
 
 /**
- * Represents inline comment positioning information
+ * Represents inline comment positioning information.
+ * Bitbucket uses diff semantics: from/to are absolute line numbers in old/new file.
+ * For multi-line comments, use start_from/start_to for the range start.
+ * For files with multiple diff hunks, start_from/start_to help identify the chunk.
  */
 interface InlineCommentInline {
   path: string;
+  /** Line in OLD file (destination/base). Use only when commenting on removed/context lines. */
   from?: number;
+  /** Line in NEW file (source/PR branch). Use only when commenting on added/changed lines. */
   to?: number;
+  /** Chunk start in OLD file (from diff @@ header). Helps placement when file has multiple hunks. */
+  start_from?: number;
+  /** Chunk start in NEW file (from diff @@ header). Helps placement when file has multiple hunks. */
+  start_to?: number;
 }
 
 /**
@@ -868,6 +877,31 @@ class BitbucketServer {
           },
         },
         {
+          name: "getPullRequestDiffChunks",
+          description:
+            "Get diff chunk boundaries for a PR. Use to compute correct start_from/start_to for addPullRequestComment when inline comments land on wrong lines. Returns chunks per file with old_start, old_count, new_start, new_count from the diff @@ headers.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              workspace: {
+                type: "string",
+                description: "Bitbucket workspace name",
+              },
+              repo_slug: { type: "string", description: "Repository slug" },
+              pull_request_id: {
+                type: "string",
+                description: "Pull request ID",
+              },
+              path: {
+                type: "string",
+                description:
+                  "Optional: filter chunks to this file path (e.g. app/drops/lib/foo.dart)",
+              },
+            },
+            required: ["workspace", "repo_slug", "pull_request_id"],
+          },
+        },
+        {
           name: "getPullRequestCommits",
           description: "Get commits on a pull request",
           inputSchema: {
@@ -915,7 +949,7 @@ class BitbucketServer {
               inline: {
                 type: "object",
                 description:
-                  "Inline comment information for commenting on specific lines",
+                  "Inline comment information. Use ONLY 'to' when commenting on the NEW file (PR branch); use ONLY 'from' when commenting on the OLD file. Avoid mixing both unless you have exact old/new line numbers. For multi-hunk files, provide start_from/start_to from the diff chunk header.",
                 properties: {
                   path: {
                     type: "string",
@@ -924,12 +958,22 @@ class BitbucketServer {
                   from: {
                     type: "number",
                     description:
-                      "Line number in the old version of the file (for deleted or modified lines)",
+                      "Line in OLD file (destination/base). Use only for removed/context lines.",
                   },
                   to: {
                     type: "number",
                     description:
-                      "Line number in the new version of the file (for added or modified lines)",
+                      "Line in NEW file (source/PR branch). Use only for added/changed lines.",
+                  },
+                  start_from: {
+                    type: "number",
+                    description:
+                      "Chunk start line in OLD file (from diff @@ header). Use when file has multiple hunks.",
+                  },
+                  start_to: {
+                    type: "number",
+                    description:
+                      "Chunk start line in NEW file (from diff @@ header). Use when file has multiple hunks.",
                   },
                 },
                 required: ["path"],
@@ -1947,6 +1991,13 @@ class BitbucketServer {
               args.repo_slug as string,
               args.pull_request_id as string
             );
+          case "getPullRequestDiffChunks":
+            return await this.getPullRequestDiffChunks(
+              args.workspace as string,
+              args.repo_slug as string,
+              args.pull_request_id as string,
+              args.path as string | undefined
+            );
           case "getPullRequestCommits":
             return await this.getPullRequestCommits(
               args.workspace as string,
@@ -2937,6 +2988,96 @@ class BitbucketServer {
     }
   }
 
+  async getPullRequestDiffChunks(
+    workspace: string,
+    repo_slug: string,
+    pull_request_id: string,
+    pathFilter?: string
+  ) {
+    try {
+      const prResponse = await this.api.get(
+        `/repositories/${workspace}/${repo_slug}/pullrequests/${pull_request_id}`
+      );
+      const sourceCommit = prResponse.data.source.commit.hash;
+      const destinationCommit = prResponse.data.destination.commit.hash;
+      const diffUrl = `/repositories/${workspace}/${repo_slug}/diff/${workspace}/${repo_slug}:${sourceCommit}%0D${destinationCommit}?from_pullrequest_id=${pull_request_id}&topic=true`;
+
+      const response = await this.api.get(diffUrl, {
+        headers: { Accept: "text/plain" },
+        responseType: "text",
+        maxRedirects: 5,
+      });
+
+      const diffText = response.data as string;
+      const files: Record<
+        string,
+        Array<{
+          old_start: number;
+          old_count: number;
+          new_start: number;
+          new_count: number;
+        }>
+      > = {};
+
+      let currentPath: string | null = null;
+      for (const line of diffText.split("\n")) {
+        const plusMatch = line.match(/^\+\+\+ b\/(.+)/);
+        if (plusMatch) {
+          currentPath = plusMatch[1];
+          if (!files[currentPath]) files[currentPath] = [];
+          continue;
+        }
+        const hunkMatch = line.match(
+          /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/
+        );
+        if (hunkMatch && currentPath) {
+          const oldStart = parseInt(hunkMatch[1], 10);
+          const oldCount = parseInt(hunkMatch[2] ?? "1", 10);
+          const newStart = parseInt(hunkMatch[3], 10);
+          const newCount = parseInt(hunkMatch[4] ?? "1", 10);
+          files[currentPath].push({
+            old_start: oldStart,
+            old_count: oldCount,
+            new_start: newStart,
+            new_count: newCount,
+          });
+        }
+      }
+
+      let result = files;
+      if (pathFilter) {
+        const normalized = pathFilter.replace(/^\//, "");
+        result = Object.fromEntries(
+          Object.entries(files).filter(
+            ([p]) => p === pathFilter || p === normalized || p.endsWith(pathFilter)
+          )
+        );
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      logger.error("Error getting pull request diff chunks", {
+        error,
+        workspace,
+        repo_slug,
+        pull_request_id,
+      });
+      throw new McpError(
+        ErrorCode.InternalError,
+        `Failed to get pull request diff chunks: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+  }
+
   async getPullRequestCommits(
     workspace: string,
     repo_slug: string,
@@ -3021,13 +3162,17 @@ class BitbucketServer {
         commentData.inline = {
           path: inline.path,
         };
-
-        // Add line number information based on the type
         if (inline.from !== undefined) {
           commentData.inline.from = inline.from;
         }
         if (inline.to !== undefined) {
           commentData.inline.to = inline.to;
+        }
+        if (inline.start_from !== undefined) {
+          commentData.inline.start_from = inline.start_from;
+        }
+        if (inline.start_to !== undefined) {
+          commentData.inline.start_to = inline.start_to;
         }
       }
 
